@@ -8,6 +8,13 @@ use crate::params::LLamaParams;
 use crate::tensor::Tensor;
 use safetensors::SafeTensors;
 use std::path::Path;
+
+#[derive(Debug)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
 pub struct Llama<T> {
     vocab: usize,           // vocab size
     n_layers: usize,        // number of layers
@@ -143,6 +150,38 @@ impl Llama<f32> {
             let output = random_sample(&output_ids, top_p, top_k, temperature);
             if output == self.eos_token_id { break; }
             result.push(output);
+            current_token_ids = vec![output];
+        }
+        result
+    }
+
+    pub fn chat(
+        &self,
+        messages: &[ChatMessage],
+        max_len: usize,
+        top_p: f32,
+        top_k: u32,
+        temperature: f32,
+        cache: &mut KVCache<f32>,
+    ) -> String {
+        let mut prompt = String::new();
+        for message in messages {
+            prompt.push_str("<|im_start|>");
+            prompt.push_str(&message.role);
+            prompt.push('\n');
+            prompt.push_str(&message.content);
+            prompt.push_str("<|im_end|>\n");
+        }
+        prompt.push_str("<|im_start|>assistant\n");
+
+        let mut result = String::new();
+        let mut current_token_ids = vec![self.bos_token_id];
+        for _ in 0..max_len {
+            let shape = current_token_ids.len();
+            let output_ids = self.forward(&Tensor::new(current_token_ids, &vec![shape]), cache);
+            let output = random_sample(&output_ids, top_p, top_k, temperature);
+            if output == self.eos_token_id { break; }
+            result.push_str(&format!("{}", output as u8 as char));
             current_token_ids = vec![output];
         }
         result
