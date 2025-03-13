@@ -18,7 +18,7 @@ impl<T: Copy + Clone + Default> Tensor<T> {
     }
 
     pub fn default(shape: &Vec<usize>) -> Self {
-        let length = shape.iter().product();
+        let length = shape.iter().product(); // Calculate the total length of the tensor
         let data = vec![T::default(); length];
         Self::new(data, shape)
     }

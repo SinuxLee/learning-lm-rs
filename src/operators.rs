@@ -71,25 +71,78 @@ pub fn masked_softmax(y: &mut Tensor<f32>) {
 }
 
 pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: f32) {
-    todo!("实现 rms_norm，计算前做一些必要的检查会帮助你后续调试")
+    let shape = x.shape();
+    let n = shape[shape.len() - 1];
+    let batch = x.size() / n;
+    assert!(y.size() == x.size());
+    assert!(w.size() == n);
+
+    let x_data = x.data();
+    let w_data = w.data();
+    let y_data = unsafe { y.data_mut() };
+
+    for b in 0..batch {
+        let offset = b * n;
+        // 计算均方根
+        let mut rms = 0.0;
+        for i in 0..n {
+            rms += x_data[offset + i] * x_data[offset + i];
+        }
+        rms = (rms / n as f32 + epsilon).sqrt();
+
+        // 归一化并缩放
+        for i in 0..n {
+            y_data[offset + i] = w_data[i] * x_data[offset + i] / rms;
+        }
+    }
 }
 
 // y = silu(x) * y
 // hint: this is an element-wise operation
 pub fn swiglu(y: &mut Tensor<f32>, x: &Tensor<f32>) {
-    // let len = y.size();
-    // assert!(len == x.size());
+    let len = y.size();
+    assert!(len == x.size());
 
-    // let _y = unsafe { y.data_mut() };
-    // let _x = x.data();
+    let arry = unsafe { y.data_mut() };
+    let arrx = x.data();
 
-    todo!("实现 silu，这里给了一些前期准备工作的提示，你可以参考")
+    // SwiGLU: y = silu(x) * y
+    // silu(x) = x * sigmoid(x)
+    for i in 0..len {
+        let sigmoid_x = 1.0 / (1.0 + (-arrx[i]).exp());
+        arry[i] *= arrx[i] * sigmoid_x;
+    }
 }
 
 // C = beta * C + alpha * A @ B^T
 // hint: You don't need to do an explicit transpose of B
 pub fn matmul_transb(c: &mut Tensor<f32>, beta: f32, a: &Tensor<f32>, b: &Tensor<f32>, alpha: f32) {
-    todo!("实现 matmul_transb，计算前做一些必要的检查会帮助你后续调试");
+    let a_shape = a.shape();
+    let b_shape = b.shape();
+    let c_shape = c.shape();
+    
+    assert!(a_shape.len() == 2 && b_shape.len() == 2 && c_shape.len() == 2);
+    assert!(a_shape[1] == b_shape[1]); // A的列数等于B的列数(因为B要转置)
+    assert!(c_shape[0] == a_shape[0] && c_shape[1] == b_shape[0]); // C的维度等于(A的行数, B的行数)
+    
+    let m = a_shape[0]; // A的行数
+    let n = b_shape[0]; // B的行数(转置后变为列数)
+    let k = a_shape[1]; // A的列数
+    
+    let a_data = a.data();
+    let b_data = b.data();
+    let c_data = unsafe { c.data_mut() };
+    
+    // C = beta * C + alpha * A @ B^T
+    for i in 0..m {
+        for j in 0..n {
+            let mut sum = 0.0;
+            for p in 0..k {
+                sum += a_data[i * k + p] * b_data[j * k + p];
+            }
+            c_data[i * n + j] = beta * c_data[i * n + j] + alpha * sum;
+        }
+    }
 }
 
 // Dot product of two tensors (treated as vectors)
@@ -97,8 +150,10 @@ pub fn matmul_transb(c: &mut Tensor<f32>, beta: f32, a: &Tensor<f32>, b: &Tensor
 pub fn dot(x: &Tensor<f32>, y: &Tensor<f32>) -> f32 {
     let len = x.size();
     assert!(len == y.size());
+
     let x_ = x.data();
     let y_ = y.data();
+    
     let mut sum = 0.0;
     for i in 0..len {
         sum += x_[i] * y_[i];

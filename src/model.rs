@@ -3,7 +3,7 @@ use std::vec;
 
 use crate::config::LlamaConfigJson;
 use crate::kvcache::KVCache;
-use crate::operators as OP;
+use crate::operators::{self as OP, masked_softmax, matmul_transb, random_sample, rms_norm, swiglu};
 use crate::params::LLamaParams;
 use crate::tensor::Tensor;
 use safetensors::SafeTensors;
@@ -101,10 +101,11 @@ impl Llama<f32> {
             let full_k = &mut cache.k_cache(layer, 0); // (total_seq, n_kv_h * dqkv)
             let full_v = &mut cache.v_cache(layer, 0); // (total_seq, n_kv_h * dqkv)
 
-            todo!("self_attention(...)");
-            todo!("down_proj matmul and add residual");
-
-            todo!("mlp(...)");
+            self_attention(&mut hidden_states, &mut att_scores, q, full_k, full_v,
+                self.n_kv_h, n_groups, seq_len, total_seq_len, self.dqkv);
+            OP::matmul_transb(&mut residual, 1., &hidden_states, &self.params.wo[layer], 1.);
+            mlp(&mut residual, &mut hidden_states, &mut gate_buf, &mut up_buf, &self.params.w_up[layer], &self.params.w_down[layer],
+                 &self.params.w_gate[layer], &self.params.rms_ffn_w[layer], self.eps);
         }
 
         // No matter what seq_len, the output is always a 1D vector of length vocab,
@@ -134,9 +135,16 @@ impl Llama<f32> {
         temperature: f32,
     ) -> Vec<u32>{
         let mut result = Vec::<u32>::new();
-        
-        todo!("实现文本生成");
-        
+        let mut kvcache = self.new_cache();
+        let mut current_token_ids = token_ids.to_vec();
+        for _ in 0..max_len {
+            let shape = current_token_ids.len();
+            let output_ids = self.forward(&Tensor::new(current_token_ids, &vec![shape]), &mut kvcache);
+            let output = random_sample(&output_ids, top_p, top_k, temperature);
+            if output == self.eos_token_id { break; }
+            result.push(output);
+            current_token_ids = vec![output];
+        }
         result
     }
 }
@@ -153,7 +161,47 @@ fn self_attention(
     total_seq_len: usize,
     dqkv: usize,
 ) {
-    todo!("Implement self_attention");
+    let _q = q.data();
+    let _k = k.data();
+    let _v = v.data();
+    let _hidden_states = unsafe { hidden_states.data_mut() };
+    for i in 0..n_kv_h {
+        for j in 0..n_groups {
+            let mut score  =att_scores.slice((i * n_groups + j) * seq_len * total_seq_len, 
+                &vec![seq_len, total_seq_len]);
+            let _score = unsafe { score.data_mut() };
+            // 向量乘法
+            for k in 0..seq_len {
+                for l in 0..total_seq_len {
+                    let mut sum = 0.;
+                    for m in 0..dqkv {
+                        sum += _q[k * n_kv_h * n_groups * dqkv + (i * n_groups + j) * dqkv + m] 
+                            * _k[l * n_kv_h * dqkv + i * dqkv + m];
+                    }
+                    _score[k * total_seq_len + l] = sum;
+                }
+            }
+            // 除以sqrt(dim)
+            for i in 0..seq_len {
+                for j in 0..total_seq_len {
+                    _score[i * total_seq_len + j] /= (dqkv as f32).sqrt();
+                }
+            }
+            masked_softmax(&mut score);
+            let _score = unsafe { score.data_mut() };
+            // attn_V(seq * dqkv) = attn(seq * total_seq) @ V(total_seq * dqkv)
+            for k in 0..seq_len {
+                for l in 0..dqkv {
+                    let mut sum = 0.;
+                    for m in 0..total_seq_len {
+                         sum += _score[k * total_seq_len + m] 
+                            * _v[m * n_kv_h * dqkv + i * dqkv + l];
+                    }
+                    _hidden_states[k * n_kv_h * n_groups * dqkv + (i * n_groups + j) * dqkv + l] = sum;
+                }
+            }
+        }
+    }
 }
 
 fn mlp(
@@ -167,7 +215,21 @@ fn mlp(
     rms_w: &Tensor<f32>,
     eps: f32,
 ) {
-    todo!("Implement mlp");
+    // hidden = rms_norm(residual)
+    rms_norm(hidden_states, residual, rms_w, eps);
+
+    // gate = hidden @ gate_weight.T
+    matmul_transb(gate, 0., hidden_states, w_gate, 1.);
+
+    // up = hidden @ up_weight.T
+    matmul_transb(up, 0., hidden_states, w_up, 1.);
+
+    // act = gate * sigmoid(gate) * up ## SwiGLU
+    swiglu(up, gate);
+
+    // output = act @ down_weight.T
+    // residual = output + residual
+    matmul_transb(residual, 1., up, w_down, 1.);
 }
 
 #[test]
