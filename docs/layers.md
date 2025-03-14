@@ -1,7 +1,8 @@
 
 ## Transformer 架构
 
-[推理过程](https://raw.githubusercontent.com/LearningInfiniTensor/handout/844a720d04a372e8dd72c3eb2583691e0e56b909/02-%E5%A4%A7%E6%A8%A1%E5%9E%8B%E6%8E%A8%E7%90%86%E7%B3%BB%E7%BB%9F/LLaMA.drawio.svg)
+[推理过程](https://raw.githubusercontent.com/LearningInfiniTensor/handout/844a720d04a372e8dd72c3eb2583691e0e56b909/02-%E5%A4%A7%E6%A8%A1%E5%9E%8B%E6%8E%A8%E7%90%86%E7%B3%BB%E7%BB%9F/LLaMA.drawio.svg)  
+[更多算子](https://github.com/onnx/onnx/blob/main/docs/Operators.md)  
 
 ```
 输入层:
